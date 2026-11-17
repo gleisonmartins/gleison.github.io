@@ -248,7 +248,7 @@ const FORMAS={pix:'Pix',debito:'Débito',dinheiro:'Dinheiro',va:'Cartão aliment
 function defaults(){return {v:2,exemplo:false,
   cat:{entrada:['Salário','Férias','13º salário','Cartão alimentação','Extra','Transferência','Reembolso','Outros'],
        saida:['Mercado','Alimentação','Farmácia','Combustível','Transporte','Casa','Financiamento da casa','Carro','Celular e internet','Assinaturas','Impostos','Seguros','Juros e tarifas','Saúde','Pet','Compras','Roupas','Viagem','Educação','Lazer','Empréstimos','Outros']},
-  lanc:[],contas:[],pagos:{},reservas:[{id:'dizimo',nome:'Dízimo',pct:10}],metas:[],cartoes:[]};}
+  lanc:[],contas:[],pagos:{},reservas:[{id:'dizimo',nome:'Dízimo',pct:10},{id:'ofertas',nome:'Ofertas',pct:10,base:'dizimo'}],metas:[],cartoes:[]};}
 function normalize(o){const d=defaults();if(!o||typeof o!=='object')return d;const arr=k=>Array.isArray(o[k])?o[k]:d[k];const ok=a=>Array.isArray(a)&&a.length;
   return {v:2,exemplo:!!o.exemplo,cat:{entrada:ok(o.cat&&o.cat.entrada)?o.cat.entrada:d.cat.entrada,saida:ok(o.cat&&o.cat.saida)?o.cat.saida:d.cat.saida},
     lanc:arr('lanc'),contas:arr('contas'),pagos:(o.pagos&&typeof o.pagos==='object'&&!Array.isArray(o.pagos))?o.pagos:{},
@@ -311,13 +311,22 @@ function contasNaFatura(card,m){const out=[];for(const c of S.contas){if(c.forma
     if(primeiraFatura({data},card)===m)out.push({conta:c,l:{id:c.id,desc:c.nome,cat:c.cat,data},k:0,n:1,valor:vc(c,X)});}}return out;}
 function itensFatura(c,m){if(c.desde&&m<c.desde)return [];const out=contasNaFatura(c,m);for(const l of S.lanc){if(l.tipo!=='saida'||l.forma!==c.id)continue;const n=l.parcelas||1,k=diffM(primeiraFatura(l,c),m);if(k>=0&&k<n)out.push({l,k,n,valor:parcelasDe(l)[k]});}return out.sort((a,b)=>b.l.data.localeCompare(a.l.data));}
 const somaFatura=(c,m)=>itensFatura(c,m).reduce((a,x)=>a+x.valor,0);
+/* Dízimo, ofertas e reservas de um mês. Ofertas podem ser % do dízimo; cada mês aceita valor próprio */
+function rendaDe(m){let b=0;for(const l of S.lanc)if(l.tipo==='entrada'&&inMonth(l,m)&&l.dizimo!==false)b+=l.valor;return b;}
+function reservasDo(m,renda){const v={};for(const r of S.reservas){const base=r.base&&r.base!=='renda'?(v[r.base]||0):renda;
+  v[r.id]=(r.valores&&r.valores[m]!=null)?r.valores[m]:r2(base*r.pct/100);}return v;}
+const baseNome=x=>{if(!x.base||x.base==='renda')return pct2(x.pct)+'% da renda';const b=S.reservas.find(y=>y.id===x.base);return pct2(x.pct)+'% do '+(b?b.nome.toLowerCase():'valor base');};
+const mesInicial=()=>S.lanc.reduce((a,l)=>!a||l.data.slice(0,7)<a?l.data.slice(0,7):a,'');
+/* Valores não entregues nos meses anteriores a m */
+function atrasoDe(x,m){const out=[];const ini=mesInicial();if(!ini)return out;for(let mm=ini;mm<m;mm=addMonth(mm,1)){if(isPago(mm,x.id))continue;
+  const v=reservasDo(mm,rendaDe(mm))[x.id]||0;if(v>0.004)out.push({m:mm,v});}return out;}
 function resumo(m){
   const pg=pagosDo(m);let ent=0,base=0,avista=0;
   for(const l of S.lanc)if(inMonth(l,m)){if(l.tipo==='entrada'){ent+=l.valor;if(l.dizimo!==false)base+=l.valor;}else if(!isCard(l.forma))avista+=l.valor;}
   let contas=0,contasPend=0;for(const {c} of contasDo(m)){if(foraDoTotal(c))continue;const v=vc(c,m);contas+=v;if(!pg.includes(c.id))contasPend+=v;}
   let fat=0,fatPend=0;for(const c of S.cartoes){const v=somaFatura(c,m);fat+=v;if(!pg.includes('fat:'+c.id))fatPend+=v;}
-  let res=0,resPend=0;for(const r of S.reservas){const v=r2(base*r.pct/100);res+=v;if(!pg.includes(r.id))resPend+=v;}
-  return {ent,base,avista,contas,contasPend,fat,fatPend,res,resPend,sobra:ent-avista-contas-fat-res,pend:contasPend+fatPend+resPend};}
+  const rv=reservasDo(m,base);let res=0,resPend=0,atraso=0;for(const r of S.reservas){const v=rv[r.id];res+=v;if(!pg.includes(r.id))resPend+=v;atraso+=atrasoDe(r,m).reduce((a,x)=>a+x.v,0);}
+  return {ent,base,avista,contas,contasPend,fat,fatPend,res,resPend,rv,atraso,sobra:ent-avista-contas-fat-res,pend:contasPend+fatPend+resPend+atraso};}
 function saldoVA(m){let s=0,used=false;for(const l of S.lanc){if(l.forma!=='va'||l.data.slice(0,7)>m)continue;used=true;s+=l.tipo==='entrada'?l.valor:-l.valor;}return used?s:null;}
 function porCategoria(m){const t={},add=(k,v)=>t[k]=(t[k]||0)+v;
   for(const l of S.lanc)if(l.tipo==='saida'&&inMonth(l,m)&&!isCard(l.forma))add(l.cat,l.valor);
@@ -331,6 +340,11 @@ function status(m,id,dia){if(isPago(m,id))return ['Pago','ok'];
 const defDate=()=>M===TODAY_YM?TODAY:M+'-01';
 const diaLabel=iso=>{const [y,m,d]=iso.split('-').map(Number);const w=new Date(y,m-1,d).toLocaleDateString('pt-BR',{weekday:'long'});return (iso===TODAY?'Hoje · ':'')+w.replace('-feira','')+', '+d+' de '+MESES[m-1].toLowerCase();};
 const ck=ok=>`<i>${ok?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>':''}</i>`;
+function linhasReserva(r){let h='';for(const x of S.reservas){const v=r.rv[x.id]||0,at=atrasoDe(x,M),tot=at.reduce((a,y)=>a+y.v,0);
+    if(v>0||(x.valores&&x.valores[M]!=null))h+=checkRow({payId:x.id,title:x.nome,sub:esc(baseNome(x))+(x.valores&&x.valores[M]!=null?' · valor ajustado':''),valor:v,act:'reserva',actId:x.id});
+    if(tot>0.004)h+=`<div class="rowwrap"><button class="check" data-act="pagarAtraso" data-id="${esc(x.id)}" aria-pressed="false" aria-label="Marcar ${esc(x.nome)} dos meses anteriores como entregue">${ck(false)}</button>
+      <button class="row" data-act="reserva" data-id="${esc(x.id)}"><span class="r-main"><span class="r-title">${esc(x.nome)} acumulado</span><span class="r-sub">${at.map(y=>mesCurto(y.m)).join(', ')}<span class="pill late">Não entregue</span></span></span><span class="r-val num">${brl(tot)}</span></button></div>`;}
+  return h;}
 function checkRow({payId,title,sub,valor,act,actId,dia}){const ok=isPago(M,payId),[txt,cls]=status(M,payId,dia);
   return `<div class="rowwrap"><button class="check" data-act="pagar" data-id="${esc(payId)}" aria-pressed="${ok}" aria-label="${ok?'Desmarcar':'Marcar'} ${esc(title)} como pago">${ck(ok)}</button>
   <button class="row" data-act="${act}" data-id="${esc(actId)}"><span class="r-main"><span class="r-title">${esc(title)}</span><span class="r-sub">${sub}<span class="pill ${cls}">${txt}</span></span></span><span class="r-val num">${brl(valor)}</span></button></div>`;}
@@ -345,14 +359,14 @@ function vMes(){
     <div class="ln"><span>Gastos no Pix, débito, dinheiro e alimentação</span><b>${neg(r.avista)}</b></div>
     <div class="ln"><span>Contas fixas e empréstimos</span><b>${neg(r.contas)}</b></div>
     <div class="ln"><span>Faturas de cartão</span><b>${neg(r.fat)}</b></div>
-    <div class="ln"><span>Dízimo e reservas</span><b>${neg(r.res)}</b></div>
+    <div class="ln"><span>Dízimo, ofertas e reservas</span><b>${neg(r.res)}</b></div>
   </div>
   <div class="hero-notes num">${r.pend>0.004?`<span class="warn">Falta pagar ${brl(r.pend)}</span>`:`<span>Tudo pago neste mês</span>`}${va!==null?`<span>Saldo do cartão alimentação ${signed(va)}</span>`:''}</div></section>`;
 
   const due=[];
   for(const {c,info} of contasDo(M))if(!foraDoTotal(c))due.push({dia:c.dia,h:checkRow({payId:c.id,title:c.nome,sub:esc(c.grupo==='emprestimo'?'Empréstimo':c.cat)+(info.tag&&info.tag!=='Anual'?' · '+info.tag:info.tag?' · anual':''),valor:vc(c,M),act:'conta',actId:c.id,dia:c.dia})});
   for(const c of S.cartoes){const v=somaFatura(c,M);if(v>0)due.push({dia:c.vence,h:checkRow({payId:'fat:'+c.id,title:'Fatura '+c.nome,sub:'Cartão de crédito',valor:v,act:'irCartoes',actId:c.id,dia:c.vence})});}
-  for(const x of S.reservas){const v=r2(r.base*x.pct/100);if(v>0)due.push({dia:99,h:checkRow({payId:x.id,title:x.nome,sub:pct2(x.pct)+'% da renda',valor:v,act:'reserva',actId:x.id})});}
+  {const h=linhasReserva(r);if(h)due.push({dia:99,h});}
   if(due.length){due.sort((a,b)=>a.dia-b.dia);html+=`<div class="block"><div class="sec"><h2>A pagar em ${esc(mesNome(M))}</h2></div><div class="list">${due.map(x=>x.h).join('')}</div></div>`;}
 
   const cats=porCategoria(M);
@@ -436,8 +450,8 @@ function vDizimo(){
   <p class="note">Calculado sobre a renda de ${esc(mesNome(M))}: ${brl(r.base)}.${r.ent-r.base>0.004?` Transferências e reembolsos (${brl(r.ent-r.base)}) ficam de fora.`:''}</p>`;
   if(!S.reservas.length)html+=`<div class="empty"><b>Nada configurado</b>Defina uma porcentagem das entradas para separar todo mês.<br><button data-act="novaReserva">Adicionar</button></div>`;
   else{html+=`<div class="list">`;
-    for(const x of S.reservas)html+=checkRow({payId:x.id,title:x.nome,sub:pct2(x.pct)+'% da renda',valor:r2(r.base*x.pct/100),act:'reserva',actId:x.id});
-    html+=`<div class="foot num"><span>Total do mês</span><span>${brl(r.res)}</span></div></div>
+    html+=linhasReserva(r);
+    html+=`<div class="foot num"><span>Total do mês</span><span>${brl(r.res)}</span></div>${r.atraso>0.004?`<div class="foot num"><span>Total a entregar, com meses anteriores</span><span>${brl(r.atraso+r.resPend)}</span></div>`:''}</div>
     <p class="note" style="margin-top:8px">Toque no círculo quando entregar ou separar o valor.</p>`;
     const ent=S.lanc.filter(l=>l.tipo==='entrada'&&inMonth(l,M)),dentro=ent.filter(l=>l.dizimo!==false),fora=ent.filter(l=>l.dizimo===false);
     const lista=(t,ls,soft)=>{if(!ls.length)return;html+=`<p class="sub-h">${t}</p><div class="list">`;
@@ -587,15 +601,21 @@ function formConta(c,grupo){
     onDelete:novo?null:()=>{S.contas=S.contas.filter(x=>x!==c);for(const k in S.pagos)S.pagos[k]=S.pagos[k].filter(id=>id!==c.id);}});}
 
 function formReserva(r){
-  const novo=!r;const o=r||{nome:'',pct:''};
+  const novo=!r;const o=r||{nome:'',pct:'',base:'renda'};
+  const bases=[['renda','Renda do mês'],...S.reservas.filter(x=>x!==r).map(x=>[x.id,'Valor do '+x.nome.toLowerCase()])];
+  const calc=!novo?r2((o.base&&o.base!=='renda'?(reservasDo(M,rendaDe(M))[o.base]||0):rendaDe(M))*o.pct/100):0;
   openSheet({title:novo?'Nova reserva':'Editar '+o.nome,
-    body:`${fld('Nome',inp('nome',o.nome,'placeholder="Ex.: Reserva de emergência" maxlength="50" autocomplete="off"'))}
-    ${fld('Porcentagem das entradas (%)',inp('pct',fmtIn(o.pct),'inputmode="decimal" placeholder="10" autocomplete="off"'))}
+    body:`${!novo?`${fld(`Valor em ${esc(mesNome(M))} (R$)`,inp('vmes',o.valores&&o.valores[M]!=null?fmtIn(o.valores[M]):'',`${MONEY} placeholder="${esc(fmtIn(calc))}"`))}
+    <p class="hint">Calculado: ${brl(calc)}. Preencha só se quiser outro valor neste mês; deixe em branco para usar o calculado.</p><h4>Configuração</h4>`:''}
+    ${fld('Nome',inp('nome',o.nome,'placeholder="Ex.: Reserva de emergência" maxlength="50" autocomplete="off"'))}
+    <div class="two">${fld('Porcentagem (%)',inp('pct',fmtIn(o.pct),'inputmode="decimal" placeholder="10" autocomplete="off"'))}${fld('Calculada sobre',`<select id="f_base" name="base">${opts(bases,o.base||'renda')}</select>`)}</div>
     <p class="hint">O valor é calculado sobre a renda do mês, inclusive férias, 13º e cartão alimentação. Entradas marcadas como "Fora do dízimo" não entram na conta.</p>`,
     onSave(fd){const nome=(fd.get('nome')||'').trim();if(!nome)return 'Dê um nome.';
       const p=parseVal(fd.get('pct'));if(!(p>0&&p<=100))return 'Use uma porcentagem entre 0,01 e 100.';
-      if(novo)S.reservas.push({id:uid(),nome,pct:p});else Object.assign(r,{nome,pct:p});toast('Salvo');},
-    onDelete:novo?null:()=>{S.reservas=S.reservas.filter(x=>x!==r);}});}
+      let vm=null;if(!novo&&String(fd.get('vmes')||'').trim()){vm=parseVal(fd.get('vmes'));if(!(vm>=0))return `Informe o valor de ${mesNome(M)} em reais, ou deixe em branco.`;}
+      const base=fd.get('base')||'renda';
+      if(novo)S.reservas.push({id:uid(),nome,pct:p,base});else{Object.assign(r,{nome,pct:p,base});r.valores=r.valores||{};if(vm!=null)r.valores[M]=vm;else delete r.valores[M];}toast('Salvo');},
+    onDelete:novo?null:()=>{S.reservas=S.reservas.filter(x=>x!==r);S.reservas.forEach(x=>{if(x.base===r.id)x.base='renda';});}});}
 
 function formMeta(g){
   const novo=!g;const o=g||{nome:'',alvo:'',guardado:''};
@@ -669,6 +689,7 @@ $('#view').addEventListener('click',e=>{const b=e.target.closest('[data-act]');i
     case 'novoLanc':return formLanc();case 'lanc':return formLanc(find(S.lanc));
     case 'novaConta':return formConta(null,'conta');case 'novoEmp':return formConta(null,'emprestimo');case 'conta':return formConta(find(S.contas));
     case 'pagar':return togglePago(id);
+    case 'pagarAtraso':{const x=find(S.reservas);const at=atrasoDe(x,M);at.forEach(y=>{(S.pagos[y.m]=S.pagos[y.m]||[]).push(x.id);});save();render();toast(x.nome+' de '+at.map(y=>mesCurto(y.m)).join(', ')+' marcado como entregue');return;}
     case 'irCartoes':TAB='cartoes';render();window.scrollTo(0,0);return;
     case 'novaReserva':return formReserva();case 'reserva':return formReserva(find(S.reservas));
     case 'novaMeta':return formMeta();case 'meta':return formMeta(find(S.metas));case 'aporte':return formAporte(find(S.metas));
