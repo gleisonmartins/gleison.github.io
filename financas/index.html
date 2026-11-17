@@ -361,7 +361,7 @@ function vMes(){
     <div class="ln"><span>Faturas de cartão</span><b>${neg(r.fat)}</b></div>
     <div class="ln"><span>Dízimo, ofertas e reservas</span><b>${neg(r.res)}</b></div>
   </div>
-  <div class="hero-notes num">${r.pend>0.004?`<span class="warn">Falta pagar ${brl(r.pend)}</span>`:`<span>Tudo pago neste mês</span>`}${va!==null?`<span>Saldo do cartão alimentação ${signed(va)}</span>`:''}</div></section>`;
+  <div class="hero-notes num">${r.pend>0.004?`<span class="warn">Falta pagar ${brl(r.pend)}</span>`:`<span>Tudo pago neste mês</span>`}${r.atraso+r.resPend>0.004?`<span class="warn">Dízimo e ofertas a entregar ${brl(r.atraso+r.resPend)}</span>`:''}${va!==null?`<span>Saldo do cartão alimentação ${signed(va)}</span>`:''}</div></section>`;
 
   const due=[];
   for(const {c,info} of contasDo(M))if(!foraDoTotal(c))due.push({dia:c.dia,h:checkRow({payId:c.id,title:c.nome,sub:esc(c.grupo==='emprestimo'?'Empréstimo':c.cat)+(info.tag&&info.tag!=='Anual'?' · '+info.tag:info.tag?' · anual':''),valor:vc(c,M),act:'conta',actId:c.id,dia:c.dia})});
@@ -446,13 +446,14 @@ function vCartoes(){
 
 function vDizimo(){
   const r=resumo(M);
-  let html=`<div class="block"><div class="sec"><h2>Dízimo e reservas</h2><button class="add" data-act="novaReserva">+ Nova</button></div>
+  const aEntregar=r.atraso+r.resPend;
+  let html=`${aEntregar>0.004?`<section class="hero"><p class="eyebrow">A entregar até ${esc(mesNome(M))}</p><p class="big num">${brl(aEntregar)}</p><div class="calc num">${S.reservas.map(x=>{const at=atrasoDe(x,M).reduce((a,y)=>a+y.v,0),cur=isPago(M,x.id)?0:(r.rv[x.id]||0);return at+cur>0.004?`<div class="ln"><span>${esc(x.nome)}${at>0.004?' (inclui meses anteriores)':''}</span><b>${brl(at+cur)}</b></div>`:'';}).join('')}</div></section>`:''}<div class="block"><div class="sec"><h2>Dízimo e reservas</h2><button class="add" data-act="novaReserva">+ Nova</button></div>
   <p class="note">Calculado sobre a renda de ${esc(mesNome(M))}: ${brl(r.base)}.${r.ent-r.base>0.004?` Transferências e reembolsos (${brl(r.ent-r.base)}) ficam de fora.`:''}</p>`;
   if(!S.reservas.length)html+=`<div class="empty"><b>Nada configurado</b>Defina uma porcentagem das entradas para separar todo mês.<br><button data-act="novaReserva">Adicionar</button></div>`;
   else{html+=`<div class="list">`;
     html+=linhasReserva(r);
     html+=`<div class="foot num"><span>Total do mês</span><span>${brl(r.res)}</span></div>${r.atraso>0.004?`<div class="foot num"><span>Total a entregar, com meses anteriores</span><span>${brl(r.atraso+r.resPend)}</span></div>`:''}</div>
-    <p class="note" style="margin-top:8px">Toque no círculo quando entregar ou separar o valor.</p>`;
+    <p class="note" style="margin-top:8px">Quando entregar, toque no círculo (o do acumulado marca todos os meses anteriores de uma vez). Não lance a entrega como gasto: o dízimo já entra na conta do mês.</p>`;
     const ent=S.lanc.filter(l=>l.tipo==='entrada'&&inMonth(l,M)),dentro=ent.filter(l=>l.dizimo!==false),fora=ent.filter(l=>l.dizimo===false);
     const lista=(t,ls,soft)=>{if(!ls.length)return;html+=`<p class="sub-h">${t}</p><div class="list">`;
       for(const l of ls)html+=`<button class="row" data-act="lanc" data-id="${l.id}"><span class="r-main"><span class="r-title">${esc(l.desc)}</span><span class="r-sub">${esc(l.cat)} · ${esc(l.data.split('-').reverse().slice(0,2).join('/'))}</span></span><span class="r-val num ${soft?'soft':'v-in'}">${brl(l.valor)}</span></button>`;
