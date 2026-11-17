@@ -396,7 +396,7 @@ function vContas(){
   for(const [t,f] of grp){const it=due.filter(f);if(!it.length)continue;
     html+=`<p class="sub-h">${t}</p><div class="list">`;
     for(const {c,info} of it){let sub=esc(c.cat);
-      if(c.grupo==='emprestimo'){const faltam=Math.max(0,c.parcelas-info.i-(isPago(M,c.id)?1:0));sub=`Parcela ${info.i+1} de ${c.parcelas} · ${faltam?`faltam ${faltam} (≈ ${brl(faltam*c.valor)})`:'última paga'}`;}
+      if(c.grupo==='emprestimo'){const faltam=Math.max(0,c.parcelas-info.i-(isPago(M,c.id)?1:0));sub=`Parcela ${info.i+1} de ${c.parcelas}${c.pct!=null&&c.pct<100?` · sua parte ${pct2(c.pct)}%${c.totais&&c.totais[M]!=null?' de '+brl(c.totais[M]):''}`:''} · ${faltam?`faltam ${faltam} (≈ ${brl(faltam*c.valor)})`:'última paga'}`;}
       else if(c.rep==='parcelas')sub+=` · parcela ${info.tag}`;else if(c.rep==='anual')sub+=' · anual';
       if(c.acompanhar){html+=`<button class="row" data-act="conta" data-id="${c.id}"><span class="r-main"><span class="r-title">${esc(c.nome)}</span><span class="r-sub">${sub}<span class="pill">Só acompanhar</span></span></span><span class="r-val num soft">${brl(vc(c,M))}</span></button>`;continue;}
       if(noCartao(c)){html+=`<button class="row" data-act="conta" data-id="${c.id}"><span class="r-main"><span class="r-title">${esc(c.nome)}</span><span class="r-sub">${sub} · no cartão ${esc(formaNome(c.forma))}<span class="pill">Na fatura</span></span></span><span class="r-val num soft">${brl(vc(c,M))}</span></button>`;continue;}
@@ -556,7 +556,8 @@ function formConta(c,grupo){
   let body;
   const acompSeg=`<div class="seg" role="radiogroup" aria-label="Entra nos meus gastos"><label><input type="radio" name="acomp" value="nao" ${o.acompanhar?'':'checked'}><span>Conta nos meus gastos</span></label><label><input type="radio" name="acomp" value="sim" ${o.acompanhar?'checked':''}><span>Só acompanhar</span></label></div><p class="hint">"Só acompanhar" mostra a conta na lista, mas não soma nos seus gastos (por exemplo, quando outra pessoa paga).</p>`;
   if(emp)body=`${fld('Nome',inp('nome',o.nome,'placeholder="Ex.: Empréstimo consignado" maxlength="50" autocomplete="off"'))}
-    <div class="two">${fld('Valor da parcela (R$)',inp('valor',fmtIn(o.valor),MONEY))}${fld('Vence no dia',inp('dia',o.dia,'type="number" inputmode="numeric" min="1" max="31"'))}</div>
+    <div class="two">${fld('Valor total da parcela (R$)',inp('valor',fmtIn(o.total!=null?o.total:o.valor),MONEY))}${fld('Minha parte (%)',inp('pctp',fmtIn(o.pct!=null?o.pct:100),'inputmode="decimal" placeholder="100" autocomplete="off"'))}</div>
+    ${fld('Vence no dia',inp('dia',o.dia,'type="number" inputmode="numeric" min="1" max="31"'))}
     <div class="two">${fld('Total de parcelas',inp('parcelas',o.parcelas,'type="number" inputmode="numeric" min="1" max="480"'))}${fld('Primeira parcela',inp('inicio',o.inicio,'type="month"'))}</div>
     <p class="hint" id="eHint"></p>${acompSeg}`;
   else body=`${fld('Nome',inp('nome',o.nome,'placeholder="Ex.: Spotify, IPVA, Seguro do carro" maxlength="50" autocomplete="off"'))}
@@ -570,13 +571,18 @@ function formConta(c,grupo){
     <p class="hint" id="rHint"></p>${acompSeg}
     ${!novo&&o.rep==='mensal'?(o.fim?`<div class="btns"><button type="button" class="sbtn" id="bFim">Reativar esta conta</button></div><p class="hint">Encerrada a partir de ${esc(mesNome(o.fim))}.</p>`:`<div class="btns"><button type="button" class="sbtn danger" id="bFim">Cancelar a partir de ${esc(mesNome(M))}</button></div><p class="hint">Use quando cancelar uma assinatura: os meses anteriores continuam no histórico.</p>`):''}`;
   const temMes=!novo&&contaNoMes(c,M);
-  if(temMes)body=`<div class="sh-body">${fld(`Valor em ${esc(mesNome(M))} (R$)`,inp('vmes',c.valores&&c.valores[M]!=null?fmtIn(c.valores[M]):'',`${MONEY} placeholder="${esc(fmtIn(c.valor))}"`))}
+  const parte=emp&&c&&c.pct!=null&&c.pct<100;
+  if(temMes)body=parte?`<div class="sh-body">${fld(`Valor total que chegou em ${esc(mesNome(M))} (R$)`,inp('vmes',c.totais&&c.totais[M]!=null?fmtIn(c.totais[M]):(c.valores&&c.valores[M]!=null?fmtIn(r2(c.valores[M]*100/c.pct)):''),`${MONEY} placeholder="${esc(fmtIn(c.total!=null?c.total:c.valor))}"`))}
+    <p class="hint strong" id="mHint"></p><p class="hint">Digite o valor cheio da parcela. O app desconta a parte que não é sua e lança só o que você paga.</p><h4>Dados do empréstimo</h4></div>`+body
+    :`<div class="sh-body">${fld(`Valor em ${esc(mesNome(M))} (R$)`,inp('vmes',c.valores&&c.valores[M]!=null?fmtIn(c.valores[M]):'',`${MONEY} placeholder="${esc(fmtIn(c.valor))}"`))}
     <p class="hint">Preencha quando o valor deste mês for diferente do valor de sempre. Deixe em branco para usar o valor de sempre.</p><h4>Dados da conta</h4></div>`+body;
   openSheet({title:novo?(emp?'Novo empréstimo':'Nova conta fixa'):(emp?'Editar empréstimo':'Editar conta fixa'),body,
     after(f){const q=s=>f.querySelector(s);
-      if(emp){const u=()=>{const v=parseVal(q('#f_valor').value),n=intIn(q('#f_parcelas').value,1,480),i=q('#f_inicio').value;
-          q('#eHint').textContent=(v>0&&n&&okMonth(i))?`Total ${brl(v*n)} · última parcela em ${mesNome(addMonth(i,n-1))}`:'';};
-        ['#f_valor','#f_parcelas','#f_inicio'].forEach(s=>q(s).oninput=u);u();return;}
+      if(emp){const u=()=>{const v=parseVal(q('#f_valor').value),n=intIn(q('#f_parcelas').value,1,480),i=q('#f_inicio').value,pc=parseVal(q('#f_pctp').value);
+          const meu=v>0&&pc>0&&pc<100?r2(v*pc/100):v;
+          q('#eHint').textContent=(v>0&&n&&okMonth(i))?(pc>0&&pc<100?`Você paga ${brl(meu)} por parcela (${pct2(pc)}%) · `:'')+`última parcela em ${mesNome(addMonth(i,n-1))}`:'';
+          const mh=q('#mHint');if(mh){const t=parseVal(q('#f_vmes').value);mh.textContent=t>0&&pc>0?`Você paga: ${brl(r2(t*pc/100))} (${pct2(pc)}% de ${brl(t)})`:`Em branco, usa ${brl(meu)}.`;}};
+        ['#f_valor','#f_parcelas','#f_inicio','#f_pctp'].forEach(s=>q(s).oninput=u);const vm=q('#f_vmes');if(vm)vm.oninput=u;u();return;}
       const u=()=>{const rep=q('input[name=rep]:checked').value;q('#wParc').hidden=rep!=='parcelas';
         q('#lIni').textContent=rep==='mensal'?'Começa em':rep==='anual'?'Vence em (mês)':'1ª parcela em';
         q('#lValor').textContent=rep==='parcelas'?'Valor da parcela (R$)':'Valor (R$)';
@@ -594,10 +600,15 @@ function formConta(c,grupo){
       const inicio=fd.get('inicio');if(!okMonth(inicio))return 'Escolha o mês.';
       const rep=emp?'parcelas':fd.get('rep');let parcelas=null;
       if(rep==='parcelas'){parcelas=intIn(fd.get('parcelas'),emp?1:2,480);if(!parcelas)return 'Informe quantas parcelas são.';}
-      const rec={nome,valor:v,dia,rep,inicio,parcelas,grupo,cat:emp?'Empréstimos':fd.get('cat'),forma:emp?'':(fd.get('forma')||''),acompanhar:fd.get('acomp')==='sim'};
+      let pc=100;if(emp){pc=String(fd.get('pctp')||'').trim()?parseVal(fd.get('pctp')):100;if(!(pc>0&&pc<=100))return 'A sua parte vai de 1 a 100%.';}
+      const rec={nome,valor:emp?r2(v*pc/100):v,dia,rep,inicio,parcelas,grupo,cat:emp?'Empréstimos':fd.get('cat'),forma:emp?'':(fd.get('forma')||''),acompanhar:fd.get('acomp')==='sim'};
+      if(emp){rec.total=v;rec.pct=pc;}
       let vm=null;if(temMes&&String(fd.get('vmes')||'').trim()){vm=parseVal(fd.get('vmes'));if(!(vm>0))return `Informe o valor de ${mesNome(M)} em reais, ou deixe em branco.`;}
       if(novo)S.contas.push({id:uid(),...rec});else{Object.assign(c,rec);
-        if(temMes){c.valores=c.valores||{};if(vm!=null)c.valores[M]=vm;else delete c.valores[M];}}
+        if(temMes){c.valores=c.valores||{};c.totais=c.totais||{};
+          if(vm==null){delete c.valores[M];delete c.totais[M];}
+          else if(emp&&pc<100){c.totais[M]=vm;c.valores[M]=r2(vm*pc/100);}
+          else{c.valores[M]=vm;delete c.totais[M];}}}
       toast(novo?(emp?'Empréstimo cadastrado':'Conta cadastrada'):'Atualizado');},
     onDelete:novo?null:()=>{S.contas=S.contas.filter(x=>x!==c);for(const k in S.pagos)S.pagos[k]=S.pagos[k].filter(id=>id!==c.id);}});}
 
